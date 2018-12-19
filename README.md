@@ -80,16 +80,17 @@ id |rnk |value |
 create local temp table tmp_observations
 on commit preserve rows as 
 (
-	select 1 as user_id, x'0012a101024b01' as featurehash, 2 as cnt
-	union all select 1, x'0012a101024b02', 1
+	select 1 as user_id, x'0112a101024b01' as featurehash, 2 as cnt
+	union all select 1, x'0112a101024b02', 1
+	union all select 2, x'0112a1010310ff', 1
 )
 order by user_id 
-segmented by hash(user_id) all nodes;
+unsegmented all nodes;
 ```
 
 Event feature hash explained:
 ```
-     00      12      a1    0102    4b01
+     01      12      a1    0102    4b01
 \______/\______/\______/\______/\______/
  isnew   region  city    categ   subcat
 ```
@@ -112,4 +113,25 @@ from (
                 over(partition auto order by user_id)
   from tmp_observations
 ) t
+
+to_hex         |pv |uv 
+---------------|---|---
+01000000000000 |4  |2  <- 2 new users in any region, any city, any category, any subcategory
+01000001020000 |3  |1  
+01000001024b01 |2  |1  
+01000001024b02 |1  |1  
+01000001030000 |1  |1  
+010000010310ff |1  |1  
+01120000000000 |4  |2  <- 2 new users in region 12, any city, any category, any subcategory
+01120001020000 |3  |1  
+01120001024b01 |2  |1  
+01120001024b02 |1  |1  
+01120001030000 |1  |1  
+011200010310ff |1  |1  
+0112a100000000 |4  |2  <- 2 new users in region 12, city a1, any category, any subcategory
+0112a101020000 |3  |1  
+0112a101024b01 |2  |1  
+0112a101024b02 |1  |1  
+0112a101030000 |1  |1  
+0112a1010310ff |1  |1  
 ```
