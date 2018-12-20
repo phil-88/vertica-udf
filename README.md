@@ -3,7 +3,7 @@
 Contains c++ transform functions for fast data processing on Vertica OLAP database:
 * RapidJsonExtractor - fast sax-based json-to-columns parser using rapid_json library.
 * RapidArrayExtractor - same for simple arrays.
-* DistinctHashCounter - pipelined group by for many dimention combinations in single run.
+* DistinctHashCounter - pipelined group by for all posible combinations of dimentions in single run.
 * Transpose - column-to-row transpose.
 
 Best performance is archived on over(partition auto) clause.
@@ -88,11 +88,25 @@ order by user_id
 unsegmented all nodes;
 ```
 
-Event feature hash explained:
+Event feature hash explained for x'0112a101024b01':
 ```
      01      12      a1    0102    4b01
 \______/\______/\______/\______/\______/
  isnew   region  city    categ   subcat
+```
+
+Event feature mask explained for x'ffff00ffff0000':
+```
+     ff      ff      00    ffff    0000
+  as-is   as-is     any   as-is     any
+\______/\______/\______/\______/\______/
+ isnew   region  city    categ   subcat
+```
+We use zeroes to build hierarchy of dimentions as follow
+```
+ffff - region and city from event without changes
+ff00 - region from event, any city
+0000 - any region, any city
 ```
 
 ```
