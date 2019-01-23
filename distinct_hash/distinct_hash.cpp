@@ -214,7 +214,7 @@ class DistinctHashCounter : public TransformFunction
             vector<DimTuple> local_hashes;
             local_hashes.reserve(HASHSIZE * MASKCOUNT);
 
-            map<DimHash, map<int, ArgMin>, LessFunctor> mutation_dups; //hash -> metric -> (min,argmin)
+            map<DimHash, map<int, ArgMin>, LessFunctor> mutation_dups; //hash -> metric_no -> (min,argmin)
 
             tsl::hopscotch_map<DimHash, DimMetrics, HashFunctor, EqualFunctor> hashes;
 
@@ -333,7 +333,7 @@ class DistinctHashCounter : public TransformFunction
                         {
                             if (mutated_bytes.i == 0xffffffff && mutation_dups.size() == 0) continue;
                             if (metrics[k].is_additive) continue;
-                            if (local_hashes.back().local_metrics[k] == 0) continue;
+                            //if (local_hashes.back().local_metrics[k] == 0) continue;
 
                             if (mutation_dups.size() == 0)
                             {
@@ -345,7 +345,7 @@ class DistinctHashCounter : public TransformFunction
 
                                     for (int j = 0; j < METRICCOUNT; ++j)
                                     {
-                                        if (!metrics[j].is_additive && local_hashes[i].local_metrics[j] != 0)
+                                        if (!metrics[j].is_additive /*&& local_hashes[i].local_metrics[j] != 0*/)
                                         {
                                             hash_mutations.insert(make_pair(j, ArgMin(0xffffffff, i)));
                                         }
@@ -357,7 +357,7 @@ class DistinctHashCounter : public TransformFunction
                             {
                                 DimHash mutation(HASHSIZE, t.hash + HASHSIZE);
                                 mutation.print = HashFunctor()(mutation);
-                                m = &mutation_dups[mutation]; // metric -> (min,argmin)
+                                m = &mutation_dups[mutation]; // metric_no -> (min,argmin)
                             }
 
                             auto p = m->find(k);
@@ -367,10 +367,16 @@ class DistinctHashCounter : public TransformFunction
                             }
                             else if (p->second.min < mutated_bytes.i)
                             {
+                                local_hashes[p->second.arg].local_metrics[k] = max(
+                                    local_hashes.back().local_metrics[k],
+                                    local_hashes[p->second.arg].local_metrics[k]);
                                 local_hashes.back().local_metrics[k] = 0;
                             }
                             else if (p->second.min > mutated_bytes.i)
                             {
+                                local_hashes.back().local_metrics[k] = max(
+                                    local_hashes.back().local_metrics[k],
+                                    local_hashes[p->second.arg].local_metrics[k]);
                                 local_hashes[p->second.arg].local_metrics[k] = 0;
                                 p->second = ArgMin(mutated_bytes.i, local_hashes.size() - 1);
                             }
