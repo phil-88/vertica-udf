@@ -3,10 +3,21 @@
 Contains c++ transform functions for fast data processing on Vertica OLAP database:
 * RapidJsonExtractor - fast sax-based json-to-columns parser using rapid_json library.
 * RapidArrayExtractor - same for simple arrays.
-* DistinctHashCounter - pipelined group by for many dimention combinations in single run.
+* DistinctHashCounter - pipelined group by for all possible combinations of dimentions in single run.
 * Transpose - column-to-row transpose.
 
 Best performance is archived on over(partition auto) clause.
+
+## when are they better than built in functions
+Vertica has many great built in functions suited for general purposes. But there are extreme cases they cannot cope with.
+
+Built in mapvalues(VMapJsonExtractor()) or maplookup(VMapJsonExtractor()) work good for extracting few columns from json. But they are too slow when you need to extract 100+ columns in a wide table. **RapidJsonExtractor** is designed to extract all top level fields from simple json in a single run for reasonable time (few minutes for extracting 600 fields from 10 million records on vertica with 20 nodes).
+
+The same for mapvalues(VMapDelimitedExtractor()). If you need to unpivot 1 billion values from 50 million arrays (20 items from a single record) using VMapDelimitedExtractor it takes like forever. So **RapidArrayExtractor** process such a task in a few minutes on a 20 node vertica.
+
+Vertica implements extremely efficient pipeleined group by algorithm to calculate distinct counts. It takes an advantage of data order so it just makes +1 when target id column increases instead of maintaining hash table of distinct values. To make it work you need to have you data ordered by dimetion columns first and target id column as a last order column. It works great if you have data ordered in a such manner. So when you need to calculate distinct count of users in all possible combinations of dimentions you need to prepopulate and preorder all combinations out of fact table. And if you have 100 million fact table you end up with a trillion record table of combinations. It is like insane. 
+
+So I came up with **DistinctHashCounter** which combines pipeline on target id column and hash table on dimention columns. You just have to order your fact table by target id column. It maintains hash table of dimentions and stores current target value for each dimention tuple. So at each iteration it just searches for corresponding record in a dimention hash table, makes +1 and updates current target value. So you have the same exact pipelined algorithm for each dimention in a hash table. With DistinctHashCounter you can calculate unique visitors from 1 billion fact table in 10 million combinations of dimentions for 15 minutes on 20 node vertica.
 
 ## examples
 ### RapidJsonExtractor
@@ -80,18 +91,33 @@ id |rnk |value |
 create local temp table tmp_observations
 on commit preserve rows as 
 (
-	select 1 as user_id, x'0012a101024b01' as featurehash, 2 as cnt
-	union all select 1, x'0012a101024b02', 1
+	select 1 as user_id, x'0112a101024b01' as featurehash, 2 as cnt
+	union all select 1, x'0112a101024b02', 1
+	union all select 2, x'0112a1010310ff', 1
 )
 order by user_id 
-segmented by hash(user_id) all nodes;
+unsegmented all nodes;
 ```
 
-Event feature hash explained:
+Event feature hash explained for x'0112a101024b01':
 ```
-     00      12      a1    0102    4b01
+     01      12      a1    0102    4b01
 \______/\______/\______/\______/\______/
  isnew   region  city    categ   subcat
+```
+
+Event feature mask explained for x'ffff00ffff0000':
+```
+     ff      ff      00    ffff    0000
+  as-is   as-is     any   as-is     any
+\______/\______/\______/\______/\______/
+ isnew   region  city    categ   subcat
+```
+We use zeroes to build hierarchy of dimentions as follow
+```
+ffff - region and city from event without changes
+ff00 - region from event, any city
+0000 - any region, any city
 ```
 
 ```
@@ -112,4 +138,25 @@ from (
                 over(partition auto order by user_id)
   from tmp_observations
 ) t
+
+to_hex         |pv |uv 
+---------------|---|---
+01000000000000 |4  |2  <- 2 new users in any region, any city, any category, any subcategory
+01000001020000 |3  |1  
+01000001024b01 |2  |1  
+01000001024b02 |1  |1  
+01000001030000 |1  |1  
+010000010310ff |1  |1  
+01120000000000 |4  |2  <- 2 new users in region 12, any city, any category, any subcategory
+01120001020000 |3  |1  
+01120001024b01 |2  |1  
+01120001024b02 |1  |1  
+01120001030000 |1  |1  
+011200010310ff |1  |1  
+0112a100000000 |4  |2  <- 2 new users in region 12, city a1, any category, any subcategory
+0112a101020000 |3  |1  
+0112a101024b01 |2  |1  
+0112a101024b02 |1  |1  
+0112a101030000 |1  |1  
+0112a1010310ff |1  |1  
 ```
