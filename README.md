@@ -8,18 +8,20 @@ Contains c++ transform functions for fast data processing on Vertica OLAP databa
 
 Best performance is archived on over(partition auto) clause.
 
-## when are they better than built in functions
+## Use cases 
 Vertica has many great built in functions suited for general purposes. But there are extreme cases they cannot cope with.
 
+### json/array unpivot
 Built in mapvalues(VMapJsonExtractor()) or maplookup(VMapJsonExtractor()) work good for extracting few columns from json. But they are too slow when you need to extract 100+ columns in a wide table. **RapidJsonExtractor** is designed to extract all top level fields from simple json in a single run for reasonable time (few minutes for extracting 600 fields from 10 million records on vertica with 20 nodes).
 
 The same for mapvalues(VMapDelimitedExtractor()). If you need to unpivot 1 billion values from 50 million arrays (20 items from a single record) using VMapDelimitedExtractor it takes like forever. So **RapidArrayExtractor** process such a task in a few minutes on a 20 node vertica.
 
+### massive count distinct
 Vertica implements extremely efficient pipeleined group by algorithm to calculate distinct counts. It takes an advantage of data order so it just makes +1 when target id column increases instead of maintaining hash table of distinct values. To make it work you need to have you data ordered by dimetion columns first and target id column as a last order column. It works great if you have data ordered in a such manner. So when you need to calculate distinct count of users in all possible combinations of dimensions you need to prepopulate and preorder all combinations out of fact table. And if you have 100 million fact table you end up with a trillion record table of combinations. It is like insane. 
 
 So I came up with **DistinctHashCounter** which combines pipeline on target id column and hash table on dimension columns. You just have to order your fact table by target id column. It maintains hash table of dimensions and stores current target value for each dimension tuple. So at each iteration it just searches for corresponding record in a dimension hash table, makes +1 and updates current target value. So you have the same exact pipelined algorithm for each dimension in a hash table. With DistinctHashCounter you can calculate unique visitors from 1 billion fact table in 10 million combinations of dimensions for 15 minutes on 20 node vertica.
 
-## examples
+## Examples
 ### RapidJsonExtractor
 
 ```
