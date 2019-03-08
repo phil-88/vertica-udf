@@ -98,14 +98,14 @@ on commit preserve rows as
 	union all select 2, x'0112a1010310ff', 1
 )
 order by user_id 
-unsegmented all nodes;
+segmented by hash(user_id) all nodes;
 ```
 
 Event feature hash explained for x'0112a101024b01':
 ```
      01      12      a1    0102    4b01
 \______/\______/\______/\______/\______/
- isnew   region  city    categ   subcat
+ platf   region  city    categ   subcat
 ```
 
 Event feature mask explained for x'ffff00ffff0000':
@@ -113,7 +113,7 @@ Event feature mask explained for x'ffff00ffff0000':
      ff      ff      00    ffff    0000
   as-is   as-is     any   as-is     any
 \______/\______/\______/\______/\______/
- isnew   region  city    categ   subcat
+ platf   region  city    categ   subcat
 ```
 We use zeroes to build hierarchy of dimentions as follow
 ```
@@ -143,19 +143,19 @@ from (
 
 to_hex         |pv |uv 
 ---------------|---|---
-01000000000000 |4  |2  <- 2 new users in any region, any city, any category, any subcategory
+01000000000000 |4  |2  <- 2 users on plafrom 1, any region, any city, any category, any subcategory
 01000001020000 |3  |1  
 01000001024b01 |2  |1  
 01000001024b02 |1  |1  
 01000001030000 |1  |1  
 010000010310ff |1  |1  
-01120000000000 |4  |2  <- 2 new users in region 12, any city, any category, any subcategory
+01120000000000 |4  |2  <- 2 users on plafrom 1, in region 12, any city, any category, any subcategory
 01120001020000 |3  |1  
 01120001024b01 |2  |1  
 01120001024b02 |1  |1  
 01120001030000 |1  |1  
 011200010310ff |1  |1  
-0112a100000000 |4  |2  <- 2 new users in region 12, city a1, any category, any subcategory
+0112a100000000 |4  |2  <- 2 users on plafrom 1, in region 12, city a1, any category, any subcategory
 0112a101020000 |3  |1  
 0112a101024b01 |2  |1  
 0112a101024b02 |1  |1  
