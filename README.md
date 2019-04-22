@@ -142,7 +142,7 @@ ff00 - region from event, any city
 ```
 
 ```
-select to_hex(hash) as breakdownhash, pv, uv
+select to_hex(hash) as breakdownhash, sum(pv) as pv, sum(uv) as uv
 from (
   select DistinctHashCounter(user_id, featurehash, cnt
                              USING PARAMETERS
@@ -159,6 +159,7 @@ from (
                 over(partition auto order by user_id)
   from tmp_observations
 ) t
+group by 1;
 
 to_hex         |pv |uv 
 ---------------|---|---
