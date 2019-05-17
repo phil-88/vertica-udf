@@ -65,7 +65,7 @@ struct SAXArrayParser
     {
         data.clear();
         levelType.clear();
-        levelType.push_back(ARRAY);
+        levelType.push_back(OBJECT);
         levelSize.clear();
         levelSize.push_back(0);
     }
@@ -112,6 +112,10 @@ struct SAXArrayParser
             JsonValue v(-1);
             data.push_back(v);
         }
+        else if (levelType.size() > ELEMENT_LEVEL)
+        {
+            data.back().s += string(levelSize.back() > 0 && levelType.back() == ARRAY ? ",null" : "null");
+        }
         levelSize.back() += 1;
         return true;
     }
@@ -123,6 +127,10 @@ struct SAXArrayParser
             JsonValue v(BoolOID);
             v.b = b;
             data.push_back(v);
+        }
+        else if (levelType.size() > ELEMENT_LEVEL)
+        {
+            data.back().s += string(levelSize.back() > 0 && levelType.back() == ARRAY ? "," : "") + string(b ? "true" : "false");
         }
         levelSize.back() += 1;
         return true;
@@ -136,6 +144,12 @@ struct SAXArrayParser
             v.i = i;
             data.push_back(v);
         }
+        else if (levelType.size() > ELEMENT_LEVEL)
+        {
+            std::ostringstream ss;
+            ss << i;
+            data.back().s += string(levelSize.back() > 0 && levelType.back() == ARRAY ? "," : "") + ss.str();
+        }
         levelSize.back() += 1;
         return true;
     }
@@ -147,6 +161,12 @@ struct SAXArrayParser
             JsonValue v(Int8OID);
             v.i = u;
             data.push_back(v);
+        }
+        else if (levelType.size() > ELEMENT_LEVEL)
+        {
+            std::ostringstream ss;
+            ss << u;
+            data.back().s += string(levelSize.back() > 0 && levelType.back() == ARRAY ? "," : "") + ss.str();
         }
         levelSize.back() += 1;
         return true;
@@ -160,6 +180,12 @@ struct SAXArrayParser
             v.i = i;
             data.push_back(v);
         }
+        else if (levelType.size() > ELEMENT_LEVEL)
+        {
+            std::ostringstream ss;
+            ss << i;
+            data.back().s += string(levelSize.back() > 0 && levelType.back() == ARRAY ? "," : "") + ss.str();
+        }
         levelSize.back() += 1;
         return true;
     }
@@ -171,6 +197,12 @@ struct SAXArrayParser
             JsonValue v(Int8OID);
             v.i = u;
             data.push_back(v);
+        }
+        else if (levelType.size() > ELEMENT_LEVEL)
+        {
+            std::ostringstream ss;
+            ss << u;
+            data.back().s += string(levelSize.back() > 0 && levelType.back() == ARRAY ? "," : "") + ss.str();
         }
         levelSize.back() += 1;
         return true;
@@ -184,6 +216,12 @@ struct SAXArrayParser
             v.d = d;
             data.push_back(v);
         }
+        else if (levelType.size() > ELEMENT_LEVEL)
+        {
+            std::ostringstream ss;
+            ss << d;
+            data.back().s += string(levelSize.back() > 0 && levelType.back() == ARRAY ? "," : "") + ss.str();
+        }
         levelSize.back() += 1;
         return true;
     }
@@ -195,6 +233,10 @@ struct SAXArrayParser
             JsonValue v(VarcharOID);
             v.s = string(str, length);
             data.push_back(v);
+        }
+        else if (levelType.size() > ELEMENT_LEVEL)
+        {
+            data.back().s += string(levelSize.back() > 0 && levelType.back() == ARRAY ? "," : "") + string(str, length);
         }
         levelSize.back() += 1;
         return true;
@@ -208,12 +250,28 @@ struct SAXArrayParser
             v.s = string(str, length);
             data.push_back(v);
         }
+        else if (levelType.size() > ELEMENT_LEVEL)
+        {
+            data.back().s += string(levelSize.back() > 0 && levelType.back() == ARRAY ? ",\"" : "\"") + string(str, length) + "\"";
+        }
         levelSize.back() += 1;
         return true;
     }
 
     bool StartObject()
     {
+        int parentType = levelType.back();
+        if (levelType.size() == ELEMENT_LEVEL)
+        {
+            JsonValue v(VarcharOID);
+            v.s += string("{");
+            data.push_back(v);
+        }
+        else if (levelType.size() > ELEMENT_LEVEL)
+        {
+            data.back().type = VarcharOID;
+            data.back().s += string(levelSize.back() > 0 && parentType == ARRAY ? ",{" : "{");
+        }
         levelType.push_back(OBJECT);
         levelSize.back() += 1;
         levelSize.push_back(0);
@@ -222,11 +280,19 @@ struct SAXArrayParser
 
     bool Key(const char* str, SizeType length, bool copy)
     {
+        if (levelType.size() > ELEMENT_LEVEL)
+        {
+            data.back().s += (levelSize.back() == 0 && levelType.back() == OBJECT ? "\"" : ",\"") + string(str, length) + "\":";
+        }
         return true;
     }
 
     bool EndObject(SizeType memberCount)
     {
+        if (levelType.size() > ELEMENT_LEVEL)
+        {
+            data.back().s += string("}");
+        }
         levelType.pop_back();
         levelSize.pop_back();
         return true;
@@ -234,6 +300,18 @@ struct SAXArrayParser
 
     bool StartArray()
     {
+        int parentType = levelType.back();
+        if (levelType.size() == ELEMENT_LEVEL)
+        {
+            JsonValue v(VarcharOID);
+            v.s += string("[");
+            data.push_back(v);
+        }
+        else if (levelType.size() > ELEMENT_LEVEL)
+        {
+            data.back().type = VarcharOID;
+            data.back().s += string(levelSize.back() > 0 && parentType == ARRAY ? ",[" : "[");
+        }
         levelType.push_back(ARRAY);
         levelSize.back() += 1;
         levelSize.push_back(0);
@@ -242,6 +320,10 @@ struct SAXArrayParser
 
     bool EndArray(SizeType elementCount)
     {
+        if (levelType.size() > ELEMENT_LEVEL)
+        {
+            data.back().s += string("]");
+        }
         levelType.pop_back();
         levelSize.pop_back();
         return true;
@@ -263,6 +345,8 @@ class RapidArrayExtractor : public TransformFunction
             {
                 vt_report_error(0, "Last column has to be varchar column");
             }
+
+            int element_len = RapidArrayExtractor::parseElementLength(srvInterface.getParamReader());
 
             Reader reader;
             SAXArrayParser parser;
@@ -306,7 +390,7 @@ class RapidArrayExtractor : public TransformFunction
                     string v = parser.getValue(j);
                     if (!v.empty())
                     {
-                        outputWriter.getStringRef(json_col + 1).copy(v.substr(0, 32).data());
+                        outputWriter.getStringRef(json_col + 1).copy(v.substr(0, element_len).data());
                     }
                     else
                     {
@@ -324,6 +408,20 @@ class RapidArrayExtractor : public TransformFunction
             vt_report_error(0, "Exception while processing partition: [%s]", e.what());
         }
     }
+
+public:
+
+    static int
+    parseElementLength(ParamReader params)
+    {
+        int len = 32;
+        if (params.containsParameter("element_length"))
+        {
+            len = params.getIntRef("element_length");
+        }
+        return len;
+    }
+
 };
 
 
@@ -332,6 +430,7 @@ class RapidArrayFactory : public TransformFunctionFactory
 
     virtual void getParameterType(ServerInterface &srvInterface, SizedColumnTypes &parameterTypes)
     {
+        parameterTypes.addInt("element_length");
     }
 
     virtual void getPrototype(ServerInterface &srvInterface, ColumnTypes &argTypes, ColumnTypes &returnType)
@@ -398,8 +497,9 @@ class RapidArrayFactory : public TransformFunctionFactory
             }
         }
 
+        int element_len = RapidArrayExtractor::parseElementLength(srvInterface.getParamReader());
         outputTypes.addInt("rnk");
-        outputTypes.addVarchar(32, "value");
+        outputTypes.addVarchar(element_len, "value");
     }
 
     virtual TransformFunction *createTransformFunction(ServerInterface &srvInterface)
