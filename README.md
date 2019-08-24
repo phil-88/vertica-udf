@@ -7,15 +7,15 @@ Contains c++ transform functions for fast data processing on Vertica OLAP databa
 * Transpose - column-to-row transpose.
 * MongodbSource - mongodb copy connector.
 
-Best performance is archived on over(partition auto) clause.
+Best performance is achieved using over(partition auto) clause.
 
 ## Use cases 
 Vertica has many great built in functions suited for general purposes. But there are extreme cases they cannot cope with.
 
 ### json/array unpivot
-Built in mapvalues(VMapJsonExtractor()) or maplookup(VMapJsonExtractor()) work good for extracting few columns from json. But they are too slow when you need to extract 100+ columns in a wide table. **RapidJsonExtractor** is designed to extract all top level fields from simple json in a single run for reasonable time (few minutes for extracting 600 fields from 10 million records on vertica with 20 nodes).
+Built in mapvalues(VMapJsonExtractor()) or maplookup(VMapJsonExtractor()) works good for extracting few columns from json. But they are too slow when you need to extract 100+ columns in a wide table. **RapidJsonExtractor** is designed to extract all top level fields from simple json in a single run for reasonable time (few minutes for extracting 600 fields from 10 million records on vertica with 20 nodes).
 
-The same for mapvalues(VMapDelimitedExtractor()). If you need to unpivot 1 billion values from 50 million arrays (20 items from a single record) using VMapDelimitedExtractor it takes like forever. So **RapidArrayExtractor** process such a task in a few minutes on a 20 node vertica.
+The same for mapvalues(VMapDelimitedExtractor()). If you need to unpivot 1 billion values from 50 million arrays (20 items from a single record) using VMapDelimitedExtractor it takes like forever. **RapidArrayExtractor** process such a task in a few minutes on a 20 node vertica.
 
 ### massive count distinct
 Vertica implements extremely efficient pipeleined group by algorithm to calculate distinct counts. It takes an advantage of data order so it just makes +1 when target id column increases instead of maintaining hash table of distinct values. To make it work you need to have you data ordered by dimension columns first and target id column as a last order column. It works great if you have data ordered in a such manner. So when you need to calculate distinct count of users in all possible combinations of dimensions you need to prepopulate and preorder all combinations out of fact table. And if you have 100 million fact table you end up with a trillion record table of combinations. It is like insane. 
@@ -40,6 +40,9 @@ Algorithm can be described as follows:
 	accumulators[accumulator_product].counter += 1
 ```
 4. print hash table
+
+Detailed description is available here:
+Golov, Filatov, Bruskin "Efficient Exact Algorithm for Count Distinct Problem", Springer, Computer Algebra in Scientific Computing, LNCS 11661
 
 ### load documents from MongoDB 
 There is a build-in flex extension for loading documents in vertica. And there are two problems with it:
