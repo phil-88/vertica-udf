@@ -5,16 +5,17 @@ Contains c++ transform functions for fast data processing on Vertica OLAP databa
 * RapidArrayExtractor - same for simple arrays.
 * DistinctHashCounter - pipelined group by for all possible combinations of dimensions in single run.
 * Transpose - column-to-row transpose.
+* MongodbSource - mongodb copy connector.
 
-Best performance is archived on over(partition auto) clause.
+Best performance is achieved using over(partition auto) clause.
 
 ## Use cases 
 Vertica has many great built in functions suited for general purposes. But there are extreme cases they cannot cope with.
 
 ### json/array unpivot
-Built in mapvalues(VMapJsonExtractor()) or maplookup(VMapJsonExtractor()) work good for extracting few columns from json. But they are too slow when you need to extract 100+ columns in a wide table. **RapidJsonExtractor** is designed to extract all top level fields from simple json in a single run for reasonable time (few minutes for extracting 600 fields from 10 million records on vertica with 20 nodes).
+Built in mapvalues(VMapJsonExtractor()) or maplookup(VMapJsonExtractor()) works good for extracting few columns from json. But they are too slow when you need to extract 100+ columns in a wide table. **RapidJsonExtractor** is designed to extract all top level fields from simple json in a single run for reasonable time (few minutes for extracting 600 fields from 10 million records on vertica with 20 nodes).
 
-The same for mapvalues(VMapDelimitedExtractor()). If you need to unpivot 1 billion values from 50 million arrays (20 items from a single record) using VMapDelimitedExtractor it takes like forever. So **RapidArrayExtractor** process such a task in a few minutes on a 20 node vertica.
+The same for mapvalues(VMapDelimitedExtractor()). If you need to unpivot 1 billion values from 50 million arrays (20 items from a single record) using VMapDelimitedExtractor it takes like forever. **RapidArrayExtractor** process such a task in a few minutes on a 20 node vertica.
 
 ### massive count distinct
 Vertica implements extremely efficient pipeleined group by algorithm to calculate distinct counts. It takes an advantage of data order so it just makes +1 when target id column increases instead of maintaining hash table of distinct values. To make it work you need to have you data ordered by dimension columns first and target id column as a last order column. It works great if you have data ordered in a such manner. So when you need to calculate distinct count of users in all possible combinations of dimensions you need to prepopulate and preorder all combinations out of fact table. And if you have 100 million fact table you end up with a trillion record table of combinations. It is like insane. 
@@ -39,6 +40,17 @@ Algorithm can be described as follows:
 	accumulators[accumulator_product].counter += 1
 ```
 4. print hash table
+
+Detailed description is available here:
+Golov, Filatov, Bruskin "Efficient Exact Algorithm for Count Distinct Problem", Springer, Computer Algebra in Scientific Computing, LNCS 11661
+
+### load documents from MongoDB 
+There is a build-in flex extension for loading documents in vertica. And there are two problems with it:
+* it is slow to parse on copy (at least two times slower then just insert document as is in a single varchar column)
+* it is slow to get too many values out of vmap representation in a single run
+
+So you can combine reading and extracting columns inside copy source using native mongodb driver. It runs inside vertica itself (eliminating transfer from app server) and works realy fast. We get it to work 5 times faster than python to copy from local stdin based extractor we used before. So now we have 1 million per minute ratio for 500 byte documents on a single worker.
+
 
 ## Examples
 ### RapidJsonExtractor
@@ -181,4 +193,105 @@ to_hex         |pv |uv
 0112a101024b02 |1  |1  
 0112a101030000 |1  |1  
 0112a1010310ff |1  |1  
+```
+
+### MongodbSource
+
+For raw json:
+```
+create local temp table tmp_mongo_json 
+(
+	id varchar(32), 
+	doc varchar(32000)
+)
+on commit preserve rows
+order by id 
+segmented by hash(id) all nodes;
+```
+
+```
+COPY tmp_mongo_json 
+WITH SOURCE MongodbSource
+(                                 
+	url='mongodb://host1:27017,host2:27017/?replicaSet=rs01',
+	database='dwh',
+	collection='clickstream',
+	query='{"_id": {"$lte": {"$oid": "5cde76f7a90e7ba133edbae1"}, "$gt": {"$oid": "5cde74d3a90e7ba1339e73ff"}}}',
+	format='json',
+	delimiter=E'\001',                 
+	terminator=E'\002'
+)                
+DELIMITER E'\001' RECORD TERMINATOR E'\002' NO ESCAPE DIRECT
+REJECTMAX 0 ABORT ON ERROR;
+```
+
+For eav:
+```
+create local temp table tmp_mongo_eav 
+(
+	id varchar(32), 
+	keys varchar(8000), 
+	values varchar(32000)
+) 
+order by id 
+segmented by hash(id) all nodes;
+```
+
+```
+COPY tmp_mongo_eav WITH SOURCE MongodbSource
+(
+	url='mongodb://host1:27017,host2:27017/?replicaSet=rs01',
+	database='dwh',
+	collection='clickstream',
+	query='{"_id": {"$lte": {"$oid": "5cde76f7a90e7ba133edbae1"}, "$gt": {"$oid": "5cde74d3a90e7ba1339e73ff"}}}',
+	format='eav',
+	delimiter=E'\001',
+	terminator=E'\002'
+)
+DELIMITER E'\001' RECORD TERMINATOR E'\002' NO ESCAPE DIRECT
+REJECTMAX 0 ABORT ON ERROR;
+```
+
+For columns:
+```
+CREATE LOCAL TEMP TABLE tmp_mongo_array  
+(
+	_id_str varchar(36),
+	eid int,
+	src_id int,
+	src int,
+	dt int,
+	dtm numeric(37,15),
+	u varchar(64),
+	uid int,
+	ua varchar(1024),
+	ip varchar(1024),
+	url varchar(1024),
+	keys varbinary(2000),
+	values varchar(16000)
+)
+ON COMMIT PRESERVE ROWS
+ORDER BY _id_str
+SEGMENTED BY hash(_id_str) ALL NODES;
+```
+
+```
+COPY tmp_mongo_array
+(
+	_id_str, keys_comp filler varchar(4000),
+	eid, src_id, src, dt, dtm, u, uid, ua, ip, url, 
+	keys as hex_to_binary(replace(keys_comp, '#', '00')), values
+)
+WITH SOURCE MongodbSource
+(                                 
+	url='mongodb://host1:27017,host2:27017/?replicaSet=rs01',
+	database='dwh',
+	collection='clickstream',
+	query='{"_id": {"$lte": {"$oid": "5cde76f7a90e7ba133edbae1"}, "$gt": {"$oid": "5cde74d3a90e7ba1339e73ff"}}}',
+	format='array:eid=eid,src_id=src_id,src=src,dt=dt,dtm=dtm,u=u,uid=uid,ua=ua,ip=ip,url=url,ref=values,v=values,ab=values,bot=values,geo=values,app=values,lid=values,cid=values,q=values,iid=values,mid=values',
+	delimiter=E'\001',                 
+	terminator=E'\002'
+)                
+DELIMITER E'\001' RECORD TERMINATOR E'\002' NO ESCAPE DIRECT
+REJECTMAX 0 ABORT ON ERROR;
 ```
