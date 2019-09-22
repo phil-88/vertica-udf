@@ -16,6 +16,63 @@ using namespace Vertica;
 using namespace std;
 
 
+std::vector<std::pair<std::string, int> >
+getDimentionColumns(ServerInterface &srvInterface, const SizedColumnTypes &inputTypes)
+{
+    std::map<string, int> columnNo;
+    for (size_t i = 0; i < inputTypes.getColumnCount(); ++i)
+    {
+        string n = inputTypes.getColumnName(i);
+        transform(n.begin(), n.end(), n.begin(), ::tolower);
+        columnNo[n] = i;
+    }
+
+    std::vector<std::pair<std::string, int> > dimentionColumns;
+    if (srvInterface.getParamReader().containsParameter("dimentions"))
+    {
+        istringstream f(srvInterface.getParamReader().getStringRef("dimentions").str());
+        string dimention;
+        while (getline(f, dimention, ','))
+        {
+            transform(dimention.begin(), dimention.end(), dimention.begin(), ::tolower);
+
+            auto i = columnNo.find(dimention);
+            dimentionColumns.push_back(make_pair(dimention, i != columnNo.end() ? i->second : -1));
+        }
+    }
+    return dimentionColumns;
+}
+
+std::string
+getStringValue(PartitionReader &inputReader, int idx, VerticaType t)
+{
+    if (t.isStringType())
+    {
+        return inputReader.getStringRef(idx).str();
+    }
+    else if (t.isInt())
+    {
+        std::ostringstream ss;
+        ss << inputReader.getIntRef(idx);
+        return ss.str();
+    }
+    else if (t.isFloat())
+    {
+        std::ostringstream ss;
+        ss << inputReader.getFloatRef(idx);
+        return ss.str();
+    }
+    else if (t.isBool())
+    {
+        return std::string(inputReader.getBoolRef(idx) ? "t" : "f");
+    }
+    else
+    {
+        return std::string();
+    }
+}
+
+
 class Transpose : public TransformFunction
 {
     virtual void processPartition(ServerInterface &srvInterface,
@@ -26,45 +83,23 @@ class Transpose : public TransformFunction
 
             const SizedColumnTypes &metaData = inputReader.getTypeMetaData();
 
-            istringstream f(srvInterface.getParamReader().getStringRef("dimentions").str());
             vector<int> dimentions;
-            string dimention;
-            while (getline(f, dimention, ','))
+            std::vector<std::pair<std::string, int> > dimentionColumns = getDimentionColumns(srvInterface, metaData);
+            for (int i = 0; i < (int)dimentionColumns.size(); ++i)
             {
-                transform(dimention.begin(), dimention.end(), dimention.begin(), ::tolower);
-                int dim_col = -1;
-                for (int i = 0; i < metaData.getColumnCount(); ++i)
-                {
-                    string col = metaData.getColumnName(i);
-                    transform(col.begin(), col.end(), col.begin(), ::tolower);
-                    if (col == dimention)
-                    {
-                        dim_col = i;
-                        break;
-                    }
-                }
-                if (dim_col == -1)
-                {
-                    vt_report_error(0, "No dimention column %s found", dimention.data());
-                    return;
-                }
-                else if (!metaData.getColumnType(dim_col).isInt() && !metaData.getColumnType(dim_col).isVarchar())
-                {
-                    vt_report_error(0, "Only integer and varchar dimentions supported");
-                    return;
-                }
-                else
-                {
-                    dimentions.push_back(dim_col);
-                }
+                std::string name = dimentionColumns[i].first;
+                int dim_col = dimentionColumns[i].second;
+                dimentions.push_back(dim_col);
             }
 
+            bool isNum = true;
             vector<int> metrics;
-            for (int i = 0; i < metaData.getColumnCount(); ++i)
+            for (size_t i = 0; i < metaData.getColumnCount(); ++i)
             {
                 if (find(dimentions.begin(), dimentions.end(), i) == dimentions.end())
                 {
                     metrics.push_back(i);
+                    isNum = isNum && metaData.getColumnType(i).isInt();
                     srvInterface.log("metric: %s", metaData.getColumnName(i).c_str());
                 }
                 else
@@ -97,8 +132,17 @@ class Transpose : public TransformFunction
                         VString &key = outputWriter.getStringRef(metric_name_idx);
                         key.copy(columnName);
 
-                        const vint &value = inputReader.getIntRef(metrics.at(i));
-                        outputWriter.setInt(metric_value_idx, value);
+                        if (isNum)
+                        {
+                            const vint &value = inputReader.getIntRef(metrics.at(i));
+                            outputWriter.setInt(metric_value_idx, value);
+                        }
+                        else
+                        {
+                            const string &value = getStringValue(inputReader, metrics.at(i), metaData.getColumnType(metrics.at(i)));
+                            VString &out = outputWriter.getStringRef(metric_value_idx);
+                            out.copy(value);
+                        }
 
                         outputWriter.next();
                     }
@@ -138,36 +182,49 @@ class TransposeFactory : public TransformFunctionFactory
             vt_report_error(0, "Function accepts 1 or more arguments, no arguments provided");
         }
 
-        std::map<string, int> dimentionTypes;
-        for (int i = 0; i < inputTypes.getColumnCount(); ++i)
+        std::set<int> dimentions;
+
+        std::vector<std::pair<std::string, int> > dimentionColumns = getDimentionColumns(srvInterface, inputTypes);
+        for (int i = 0; i < (int)dimentionColumns.size(); ++i)
         {
-            string n = inputTypes.getColumnName(i);
-            dimentionTypes[n] = i;
+            std::string name = dimentionColumns[i].first;
+            int no = dimentionColumns[i].second;
+            if (no == -1)
+            {
+                vt_report_error(0, "No dimention column %s found", name.data());
+            }
+            else if (inputTypes.getColumnType(no).isVarchar())
+            {
+                outputTypes.addVarchar(inputTypes.getColumnType(no).getStringLength(), name);
+            }
+            else if (inputTypes.getColumnType(no).isInt())
+            {
+                outputTypes.addInt(name);
+            }
+            else
+            {
+                vt_report_error(0, "Only integer and varchar dimentions supported");
+            }
+            dimentions.insert(no);
         }
 
-        if (srvInterface.getParamReader().containsParameter("dimentions"))
+        bool isNum = true;
+        int keySize = 256;
+        int valueSize = 256;
+
+        for (size_t i = 0; i < inputTypes.getColumnCount(); ++i)
         {
-            istringstream f(srvInterface.getParamReader().getStringRef("dimentions").str());
-            string dimention;
-            while (getline(f, dimention, ','))
+            if (dimentions.find(i) == dimentions.end())
             {
-                if (inputTypes.getColumnType(dimentionTypes[dimention]).isVarchar())
-                {
-                    outputTypes.addVarchar(inputTypes.getColumnType(dimentionTypes[dimention]).getStringLength(), dimention);
-                }
-                else if (inputTypes.getColumnType(dimentionTypes[dimention]).isInt())
-                {
-                    outputTypes.addInt(dimention);
-                }
-                else
-                {
-                    vt_report_error(0, "Only integer and varchar dimentions supported");
-                }
+                VerticaType t = inputTypes.getColumnType(i);
+                isNum = isNum && t.isInt();
+                valueSize = max(valueSize, (int)t.getStringLength(false));
+                keySize = max(keySize, (int)inputTypes.getColumnName(i).size());
             }
         }
 
-        outputTypes.addVarchar(128, "col");
-        outputTypes.addInt("value");
+        outputTypes.addVarchar(keySize, "col");
+        isNum ? outputTypes.addInt("value") : outputTypes.addVarchar(valueSize, "value");
     }
 
     virtual TransformFunction *createTransformFunction(ServerInterface &srvInterface)

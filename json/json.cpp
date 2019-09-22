@@ -351,11 +351,12 @@ struct SAXJsonParser
 
     bool StartArray()
     {
+        int parentType = levelType.back();
         levelType.push_back(ARRAY);
         if (levelType.size() > MAX_LEVEL)
         {
             data[current_key].type = VarcharOID;
-            data[current_key].s += "[";
+            data[current_key].s += (levelSize.back() > 0 && parentType == ARRAY ? ",[" : "[");
         }
         levelSize.back() += 1;
         levelSize.push_back(0);

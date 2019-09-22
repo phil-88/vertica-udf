@@ -23,6 +23,8 @@
 #define MAXMETRICCOUNT 128
 #define MAXMASKCOUNT 2048
 
+//#include "backtrace.h"
+//INSTALL_SIGSEGV_TRAP
 
 using namespace Vertica;
 using namespace std;
@@ -548,6 +550,8 @@ class DistinctHashCounter : public TransformFunction
 
             // print resulting hash table
             srvInterface.log("thread %d dump result", threadNo);
+
+            isMultithreaded && sharedMutex.lock_shared();
             for (auto it = globalHashTable.begin(); it != globalHashTable.end(); ++it)
             {
                 VString &res = outputWriter.getStringRefNoClear(0);
@@ -563,6 +567,7 @@ class DistinctHashCounter : public TransformFunction
                 }
                 outputWriter.next();
             }
+            isMultithreaded && sharedMutex.unlock_shared();
 
             srvInterface.log("thread %d ended", threadNo);
         }
