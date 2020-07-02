@@ -6,6 +6,7 @@ Contains c++ transform functions for fast data processing on Vertica OLAP databa
 * DistinctHashCounter - pipelined group by for all possible combinations of dimensions in single run.
 * Transpose - column-to-row transpose.
 * MongodbSource - mongodb copy connector.
+* KafkaSparseSource - kafka copy connector.
 
 Best performance is achieved using over(partition auto) clause.
 
@@ -50,6 +51,9 @@ There is a build-in flex extension for loading documents in vertica. And there a
 * it is slow to get too many values out of vmap representation in a single run
 
 So you can combine reading and extracting columns inside copy source using native mongodb driver. It runs inside vertica itself (eliminating transfer from app server) and works realy fast. We get it to work 5 times faster than python to copy from local stdin based extractor we used before. So now we have 1 million per minute ratio for 500 byte documents on a single worker.
+
+### Kafka connector
+Kafka connector with open source code. Optimized to load jsons with 1500 column schema at 2Mrows/min.
 
 
 ## Examples
