@@ -37,15 +37,10 @@ struct Metric
     bool is_additive;
 };
 
-struct Dimension
-{
-    int pos;
-    int size;
-};
-
 struct DimHash
 {
-    DimHash(char sz = 0, char *d = 0) : print(0), size(sz), hash(d) {}
+    DimHash(char sz = 0, char *d = 0)
+        : print(0), size(sz), hash(d) {}
 
     size_t print;
     char size;
@@ -68,28 +63,8 @@ struct EqualFunctor
     }
 };
 
-struct LessFunctor
-{
-    bool operator()(const DimHash& x, const DimHash& y) const
-    {
-        if (x.print < y.print)
-        {
-            return true;
-        }
-        else if (x.print > y.print)
-        {
-            return false;
-        }
-        else
-        {
-            return memcmp(x.hash, y.hash, x.size) == -1;
-        }
-    }
-};
-
-
 struct ResultTuple
-{
+{   
     ResultTuple(char *hash = 0, int *data = 0, int metricCount = 0)
         : hash(hash),
           final_metrics(data),
@@ -97,107 +72,14 @@ struct ResultTuple
           counted((char*)(data + metricCount) + metricCount) {}
 
     char *hash;
-    int *final_metrics;
+    int  *final_metrics;
     char *local_metrics;
     char *counted;
-};
 
-
-struct i8
-{
-    union
+    static inline char is_counted(int *data, int metricCount)
     {
-        uint64 i;
-        char b[8];
-    };
-
-    int size;
-};
-
-
-struct ArgMin
-{
-    ArgMin(uint64 v, int a) : min(v), arg(a) {}
-
-    uint64 min;
-    int arg;
-};
-
-
-class MinMutation
-{
-public:
-    MinMutation(const int hashSize, vector<Metric> metrics)
-        : HASHSIZE(hashSize), METRICCOUNT(metrics.size()), metrics(metrics) {}
-
-    void apply(vector<ResultTuple> &local_hashes, char *blank_hash, i8 mutated_bytes)
-    {
-        map<int, ArgMin> *m = NULL;
-
-        for (int k = 0; k < METRICCOUNT; ++k)
-        {
-            if (mutated_bytes.i == 0xffffffff && mutation_dups.size() == 0) continue;
-            if (metrics[k].is_additive) continue;
-            //if (local_hashes.back().local_metrics[k] == 0) continue;
-
-            if (mutation_dups.size() == 0)
-            {
-                for (size_t i = 0; i < local_hashes.size() - 1; ++i)
-                {
-                    DimHash deferred(HASHSIZE, local_hashes[i].hash + HASHSIZE);
-                    deferred.print = HashFunctor()(deferred);
-                    map<int, ArgMin> &hash_mutations = mutation_dups[deferred];
-
-                    for (int j = 0; j < METRICCOUNT; ++j)
-                    {
-                        if (!metrics[j].is_additive /*&& local_hashes[i].local_metrics[j] != 0*/)
-                        {
-                            hash_mutations.insert(make_pair(j, ArgMin(0xffffffff, i)));
-                        }
-                    }
-                }
-            }
-
-            if (m == NULL)
-            {
-                DimHash mutation(HASHSIZE, blank_hash);
-                mutation.print = HashFunctor()(mutation);
-                m = &mutation_dups[mutation]; // metric_no -> (min,argmin)
-            }
-
-            auto p = m->find(k);
-            if (p == m->end())
-            {
-                m->insert(make_pair(k, ArgMin(mutated_bytes.i, local_hashes.size() - 1)));
-            }
-            else if (p->second.min < mutated_bytes.i)
-            {
-                local_hashes[p->second.arg].local_metrics[k] = max(
-                    local_hashes.back().local_metrics[k],
-                    local_hashes[p->second.arg].local_metrics[k]);
-                local_hashes.back().local_metrics[k] = 0;
-            }
-            else if (p->second.min > mutated_bytes.i)
-            {
-                local_hashes.back().local_metrics[k] = max(
-                    local_hashes.back().local_metrics[k],
-                    local_hashes[p->second.arg].local_metrics[k]);
-                local_hashes[p->second.arg].local_metrics[k] = 0;
-                p->second = ArgMin(mutated_bytes.i, local_hashes.size() - 1);
-            }
-        }
+        return *((char*)(data + metricCount) + metricCount);
     }
-
-    void reset()
-    {
-        mutation_dups.clear();
-    }
-
-private:
-    const int HASHSIZE;
-    const int METRICCOUNT;
-    vector<Metric> metrics;
-    map<DimHash, map<int, ArgMin>, LessFunctor> mutation_dups; //hash -> metric_no -> (min,argmin)
 };
 
 
@@ -268,6 +150,35 @@ inline int create_value_mask(char *metrics, int metric_count)
     return m;
 }
 
+void toHex(const char *b, char *s, int size = 16)
+{
+    static const char digits[513] =
+        "000102030405060708090a0b0c0d0e0f"
+        "101112131415161718191a1b1c1d1e1f"
+        "202122232425262728292a2b2c2d2e2f"
+        "303132333435363738393a3b3c3d3e3f"
+        "404142434445464748494a4b4c4d4e4f"
+        "505152535455565758595a5b5c5d5e5f"
+        "606162636465666768696a6b6c6d6e6f"
+        "707172737475767778797a7b7c7d7e7f"
+        "808182838485868788898a8b8c8d8e8f"
+        "909192939495969798999a9b9c9d9e9f"
+        "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf"
+        "b0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+        "c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"
+        "d0d1d2d3d4d5d6d7d8d9dadbdcdddedf"
+        "e0e1e2e3e4e5e6e7e8e9eaebecedeeef"
+        "f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff";
+
+    char *lut = (char *)(digits);
+    for (int i = 0; i < size; ++i)
+    {
+        int pos = (b[i] & 0xFF) * 2;
+
+        s[i * 2] = lut[pos];
+        s[i * 2 + 1] = lut[pos + 1];
+    }
+}
 
 class DistinctHashCounter : public TransformFunction
 {
@@ -276,7 +187,8 @@ class DistinctHashCounter : public TransformFunction
         mutex.lock();
         if (threadCount == 0)
         {
-            boundCookies.clear();
+            partitionBoundCookies.clear();
+            threadPartition.clear();
             globalHashTable.clear();
             blocks.clear();
             blocks.push_back(DataBlock<int, METRIC_BLOCK_CAPACITY>(true));
@@ -295,7 +207,8 @@ class DistinctHashCounter : public TransformFunction
         threadCount--;
         if (threadCount == 0)
         {
-            boundCookies.clear();
+            partitionBoundCookies.clear();
+            threadPartition.clear();
             globalHashTable.clear();
             blocks.clear();
             srvInterface.log("cache cleaned up");
@@ -314,30 +227,38 @@ class DistinctHashCounter : public TransformFunction
 
             // check semantics
             const SizedColumnTypes &inputColumns = inputReader.getTypeMetaData();
-
             if (inputColumns.getColumnCount() < 3)
             {
                 vt_report_error(0, "Too few columns");
             }
 
-            for (size_t c = 0; c < inputColumns.getColumnCount(); ++c)
+            int payloadColumn = -1;
+            if (inputColumns.getColumnType(0).isVarbinary())
             {
-                if (c == 0 && !inputColumns.getColumnType(c).isInt())
-                {
-                    vt_report_error(0, "First column expected to be identifier of type integer");
-                }
-                else if (c == 1 && !inputColumns.getColumnType(c).isVarbinary())
-                {
-                    vt_report_error(0, "Second column expected to be hash of type varbinary");
-                }
-                else if (c > 1 && !inputColumns.getColumnType(c).isInt())
+                payloadColumn = 0;
+            }
+
+            if (!inputColumns.getColumnType(payloadColumn + 1).isInt())
+            {
+                vt_report_error(0, "First column expected to be ordered identifier of type integer");
+            }
+            if (!inputColumns.getColumnType(payloadColumn + 2).isVarbinary())
+            {
+                vt_report_error(0, "Second column expected to be feature hash of type varbinary");
+            }
+            for (size_t c = payloadColumn + 3; c < inputColumns.getColumnCount(); ++c)
+            {
+                if (!inputColumns.getColumnType(c).isInt())
                 {
                     vt_report_error(0, "Metric column expected to be integer");
                 }
             }
 
+            bool hasPartitions = inputColumns.getLastPartitionColumnIdx() > -1;
+
             // parse params
-            vector<Metric> metrics = DistinctHashCounter::parseCounters(srvInterface.getParamReader(), inputReader.getTypeMetaData());
+            vector<Metric> metrics = DistinctHashCounter::parseCounters(srvInterface.getParamReader(),
+                                                                        inputReader.getTypeMetaData());
             int METRICCOUNT = min(MAXMETRICCOUNT, (int)metrics.size());
             int METRIC_TUPLE_SIZE = METRICCOUNT + METRICCOUNT / sizeof(int) + 1;
 
@@ -349,10 +270,10 @@ class DistinctHashCounter : public TransformFunction
             int MASKCOUNT = min(MAXMASKCOUNT, (int) (blob.length() / header.length()));
 
             char mask_blob[65000];
-            memcpy(mask_blob, blob.data(), HASHSIZE * MASKCOUNT); //memset(mask_blob, 0, 65000);
+            memcpy(mask_blob, blob.data(), HASHSIZE * MASKCOUNT);
 
             char mask_params[MAXHASHSIZE];
-            memcpy(mask_params, header.data(), HASHSIZE); //memset(mask_params, 0, MAXHASHSIZE);
+            memcpy(mask_params, header.data(), HASHSIZE);
 
             char *masks[MAXMASKCOUNT];
             for (int c = 0; c < MASKCOUNT; ++c)
@@ -360,21 +281,10 @@ class DistinctHashCounter : public TransformFunction
                 masks[c] = mask_blob + c * HASHSIZE;
             }
 
-            vector<Dimension> mutatedDimensions = DistinctHashCounter::parseMutations(srvInterface.getParamReader(), HASHSIZE, mask_params);
-            bool hasMutations = mutatedDimensions.size() > 0;
-
-            char mutation_mask[MAXHASHSIZE];
-            memset(mutation_mask, 0xff, MAXHASHSIZE);
-            initMutationMask(mutatedDimensions, mutation_mask);
-
-            MinMutation minMutation(HASHSIZE, metrics);
-
             // buffer variables
             char fact_hash[MAXHASHSIZE * 2];
-            char *blank_hash = fact_hash + MAXHASHSIZE;
-            int hash_factor = hasMutations ? 2 : 1;
 
-            DataBlock<int,METRIC_BLOCK_CAPACITY> nextBlock(true);
+            DataBlock<int, METRIC_BLOCK_CAPACITY> nextBlock(true);
             vector<ResultTuple> local_hashes;
             local_hashes.reserve(HASHSIZE * MASKCOUNT);
 
@@ -382,8 +292,8 @@ class DistinctHashCounter : public TransformFunction
 
             bool isMultithreaded = threadCount > 1;
 
-            int rowCount = 0;
             int blockSize = inputReader.getNumRows();
+            int blockRow = 0;
             bool blockEdge = true;
 
             bool hasMore = false;
@@ -391,10 +301,10 @@ class DistinctHashCounter : public TransformFunction
             // process blocks
             do
             {
-                vint cookie = inputReader.getIntRef(0);
-                VString hash = inputReader.getStringRef(1);
+                std::string payload = payloadColumn == 0 ? inputReader.getStringRef(0).str() : std::string();
+                vint cookie = inputReader.getIntRef(payloadColumn + 1);
+                VString hash = inputReader.getStringRef(payloadColumn + 2);
                 vint value;
-                vint distinct_value;
 
                 if ((int)hash.length() < HASHSIZE)
                 {
@@ -413,14 +323,9 @@ class DistinctHashCounter : public TransformFunction
                     int m_params = 0;
                     int d_params = 0;
 
-                    i8 mutated_bytes;
-                    mutated_bytes.i = 0xffffffff;
-                    mutated_bytes.size = 0;
-
                     for (int i = 0; i < HASHSIZE; ++i)
                     {
                         fact_hash[i] = d[i] & mask[i];
-                        blank_hash[i] = fact_hash[i] & mutation_mask[i];
 
                         if (mask_params[i] != pno)
                         {
@@ -430,14 +335,9 @@ class DistinctHashCounter : public TransformFunction
                         }
                         d_params |= (fact_hash[i] != 0 ? 1 : 0);
                         m_params |= (mask[i] != 0 ? 1 : 0);
-
-                        if (hasMutations && mutation_mask[i] == 0)
-                        {
-                            mutated_bytes.b[mutated_bytes.size++] = fact_hash[i];
-                        }
                     }
 
-                    // check if mask fulfilled
+                    // check if mask fulfilled to avoid double counting as we dont store cookie in a hash table
                     if (d_params != m_params)
                     {
                         continue;
@@ -458,8 +358,8 @@ class DistinctHashCounter : public TransformFunction
                         isMultithreaded && sharedMutex.lock();
 
                         int *data = allocate<int>(METRIC_TUPLE_SIZE * threadCount, nextBlock);
-                        char *hash = allocate<char>(HASHSIZE * hash_factor, nextBlock);
-                        memcpy(hash, fact_hash, HASHSIZE * hash_factor);
+                        char *hash = allocate<char>(HASHSIZE, nextBlock);
+                        memcpy(hash, fact_hash, HASHSIZE);
 
                         DimHash h(HASHSIZE, hash);
                         h.print = probe.print;
@@ -482,29 +382,36 @@ class DistinctHashCounter : public TransformFunction
                         if (inputReader.isNull(metrics[k].input_ind)) continue;
 
                         value = inputReader.getIntRef(metrics[k].input_ind);
-                        distinct_value = t.local_metrics[k] ? 0 : max(0, min((int)value, 1));
-                        t.local_metrics[k] += metrics[k].is_additive ? value : distinct_value;
-                    }
-
-                    // apply mutation by picking right local hash and moving counters
-                    if (hasMutations)
-                    {
-                        minMutation.apply(local_hashes, blank_hash, mutated_bytes);
+                        if (metrics[k].is_additive) // add value for additive
+                            t.local_metrics[k] += value;
+                        else if (t.local_metrics[k] == 0) // +1 if not seen yet
+                            t.local_metrics[k] += max(0, min((int)value, 1));
                     }
                 }
 
-                // check if sorted block of data ended
-                rowCount += 1;
                 blockSize = inputReader.getNumRows();
-                if (rowCount % blockSize == 0)
+                hasMore = inputReader.next();
+
+                // check if physical block ended
+                blockRow = (blockRow + 1) % blockSize;
+                bool blockChanged = (!hasMore || blockRow == 0);
+
+                if (blockChanged)
                 {
                     blockEdge = true;
-                    rowCount = 0;
+                }
+
+                // check if logical block ended
+                bool payloadChanged = !hasMore || (payloadColumn == 0 && inputReader.getStringRef(0).str() != payload);
+                bool cookieChanged = !hasMore || inputReader.getIntRef(payloadColumn + 1) != cookie;
+
+                if (payloadChanged)
+                {
+                    blockEdge = true;
                 }
 
                 // flush local counters on cookie change
-                hasMore = inputReader.next();
-                if (!hasMore || inputReader.getIntRef(0) != cookie || (isMultithreaded && rowCount % blockSize == 0))
+                if (cookieChanged || payloadChanged || (!hasPartitions && isMultithreaded && blockChanged))
                 {
                     for (size_t i = 0; i < local_hashes.size(); ++i)
                     {
@@ -513,15 +420,14 @@ class DistinctHashCounter : public TransformFunction
 
                         // check if cookie on block edge already counted in another thread
                         int cookieAlreadySeen = 0;
-                        if (isMultithreaded && (!hasMore || blockEdge))
+                        if (!hasPartitions && isMultithreaded && blockEdge)
                         {
-                            DimHash probe(HASHSIZE, local_hashes[i].hash);
-                            probe.print = HashFunctor()(probe);
                             int value_mask = create_value_mask(local_hashes[i].local_metrics, METRICCOUNT);
 
                             mutex.lock();
-                            tsl::hopscotch_map<DimHash, int, HashFunctor, EqualFunctor> &knownHashes = boundCookies[cookie];
-                            int &m = knownHashes[probe];
+                            SharedPartition &p = partitionBoundCookies[payload];
+                            tsl::hopscotch_map<char*, int> &knownHashes = p[cookie];
+                            int &m = knownHashes[local_hashes[i].hash];
                             cookieAlreadySeen = m;
                             m |= value_mask;
                             mutex.unlock();
@@ -538,36 +444,67 @@ class DistinctHashCounter : public TransformFunction
                         }
                     }
                     local_hashes.clear();
-                    minMutation.reset();
 
-                    if (rowCount % blockSize > 0)
+                    if (cookieChanged && !payloadChanged && !blockChanged)
                     {
                         blockEdge = false;
                     }
                 }
 
-            } while (hasMore);
-
-            // print resulting hash table
-            srvInterface.log("thread %d dump result", threadNo);
-
-            isMultithreaded && sharedMutex.lock_shared();
-            for (auto it = globalHashTable.begin(); it != globalHashTable.end(); ++it)
-            {
-                VString &res = outputWriter.getStringRefNoClear(0);
-                res.copy(it->first.hash, HASHSIZE);
-
-                int *final_metrics = it.value() + METRIC_TUPLE_SIZE * threadNo;
-                char *counted = (char*)(final_metrics + METRICCOUNT) + METRICCOUNT;
-                if (*counted == 0) continue;
-
-                for (int i = 0; i < METRICCOUNT; ++i)
+                // print hash table on partition/payload change
+                if (payloadChanged)
                 {
-                    outputWriter.setInt(1 + i, final_metrics[i]);
+                    srvInterface.log("thread %d dump partition", threadNo);
+
+                    isMultithreaded && sharedMutex.lock_shared();
+                    for (auto it = globalHashTable.begin(); it != globalHashTable.end(); ++it)
+                    {
+                        if (payloadColumn != -1)
+                        {
+                            VString &res = outputWriter.getStringRefNoClear(0);
+                            res.copy(payload);
+                        }
+                        VString &res = outputWriter.getStringRefNoClear(payloadColumn + 1);
+                        res.copy(it->first.hash, HASHSIZE);
+
+                        int *final_metrics = it.value() + METRIC_TUPLE_SIZE * threadNo;
+                        if (ResultTuple::is_counted(final_metrics, METRICCOUNT) == 0) continue;
+
+                        for (int i = 0; i < METRICCOUNT; ++i)
+                        {
+                            outputWriter.setInt(payloadColumn + 2 + i, final_metrics[i]);
+                        }
+                        outputWriter.next();
+
+                        memset(final_metrics, 0, METRIC_TUPLE_SIZE * sizeof(int));
+                    }
+                    isMultithreaded && sharedMutex.unlock_shared();
+
+                    // clear early partitions
+                    if (!hasPartitions && isMultithreaded)
+                    {
+                        mutex.lock();
+                        threadPartition[threadNo] = payload;
+
+                        std::string minPayload = payload;
+                        for (auto it = threadPartition.begin(); it != threadPartition.end(); ++it)
+                        {
+                            minPayload = std::min(it.value(), minPayload);
+                        }
+
+                        for (auto it = partitionBoundCookies.begin(); it != partitionBoundCookies.end(); ++it)
+                        {
+                            if (it.key() < minPayload)
+                            {
+                                partitionBoundCookies.erase(it);
+                            }
+                        }
+
+                        mutex.unlock();
+                    }
                 }
-                outputWriter.next();
-            }
-            isMultithreaded && sharedMutex.unlock_shared();
+
+            } while (hasMore);            
 
             srvInterface.log("thread %d ended", threadNo);
         }
@@ -592,59 +529,7 @@ class DistinctHashCounter : public TransformFunction
         return reinterpret_cast<type*>(res);
     }
 
-    void initMutationMask(const vector<Dimension> &mutatedDimensions, char *mutationMask)
-    {
-        for (size_t m = 0; m < mutatedDimensions.size(); ++m)
-        {
-            for (int i = 0; i < mutatedDimensions[m].size; ++i)
-            {
-                mutationMask[mutatedDimensions[m].pos + i] = 0;
-            }
-        }
-    }
-
 public:
-
-    static vector<Dimension>
-    parseMutations(ParamReader params, int hashSize, char *hashParams)
-    {
-        vector<Dimension> dimMutations;
-
-        if (params.containsParameter("min_mutations"))
-        {
-            string minMutations = params.getStringRef("min_mutations").str();
-            vector<string> mutations = splitString(minMutations, ',');
-
-            for (auto m = mutations.begin(); m!= mutations.end(); ++m)
-            {
-                Dimension dim;
-                dim.pos = -1;
-                dim.size = -1;
-
-                int dim_no = strtol(m->data(), 0, 16);
-                for (int p = 0; p < hashSize; ++p)
-                {
-                    if (hashParams[p] == dim_no && dim.pos == -1)
-                    {
-                        dim.pos = p;
-                        dim.size = 1;
-                    }
-                    else if(hashParams[p] == dim_no && dim.pos != -1)
-                    {
-                        dim.size += 1;
-                    }
-                }
-
-                if (dim.pos != -1)
-                {
-                    dim.size = min(dim.size, 4);
-                    dimMutations.push_back(dim);
-                }
-            }
-        }
-
-        return dimMutations;
-    }
 
     static vector<Metric>
     parseCounters(ParamReader params, const SizedColumnTypes &inputColumns)
@@ -725,14 +610,15 @@ private:
     static int threadCount;
     static std::mutex mutex;
     static sf::contention_free_shared_mutex< > sharedMutex;
+    int threadNo;
 
     static tsl::hopscotch_map<DimHash, int*, HashFunctor, EqualFunctor> globalHashTable;
-    static tsl::hopscotch_map<vint, tsl::hopscotch_map<DimHash, int, HashFunctor, EqualFunctor> > boundCookies;
+    typedef tsl::hopscotch_map<vint, tsl::hopscotch_map<char*, int> > SharedPartition;
+    static tsl::hopscotch_map<std::string, SharedPartition> partitionBoundCookies;
+    static tsl::hopscotch_map<int, std::string> threadPartition;
 
     static list<DataBlock<int, METRIC_BLOCK_CAPACITY> > blocks;
     static int blockCursor;
-
-    int threadNo;
 };
 
 
@@ -741,7 +627,8 @@ std::mutex DistinctHashCounter::mutex;
 sf::contention_free_shared_mutex< > DistinctHashCounter::sharedMutex;
 
 tsl::hopscotch_map<DimHash, int*, HashFunctor, EqualFunctor> DistinctHashCounter::globalHashTable;
-tsl::hopscotch_map<vint, tsl::hopscotch_map<DimHash, int, HashFunctor, EqualFunctor> > DistinctHashCounter::boundCookies;
+tsl::hopscotch_map<std::string, DistinctHashCounter::SharedPartition> DistinctHashCounter::partitionBoundCookies;
+tsl::hopscotch_map<int, std::string> DistinctHashCounter::threadPartition;
 
 list<DataBlock<int, METRIC_BLOCK_CAPACITY> > DistinctHashCounter::blocks;
 int DistinctHashCounter::blockCursor = 0;
@@ -794,17 +681,15 @@ class DistinctHashCounterFactory2 : public TransformFunctionFactory
 
     virtual void getPrototype(ServerInterface &srvInterface, ColumnTypes &argTypes, ColumnTypes &returnType)
     {
-        argTypes.addAny();//cookie(int) + hash(varbinary) + metrics
-        returnType.addAny();//hash(varbinary) + metrics
+        argTypes.addAny(); //payload(varbinary) + cookie(int) + features(varbinary) + metrics
+        returnType.addAny(); //hash(varbinary) + features(varbinary) + metrics
     }
 
     virtual void getParameterType(ServerInterface &srvInterface,
                                   SizedColumnTypes &parameterTypes)
     {
-        parameterTypes.addIntOrderColumn("cookie");
         parameterTypes.addVarchar(4096, "uniq_counters", SizedColumnTypes::Properties(false, true, false, "uniq metrics comma separated"));
         parameterTypes.addVarchar(4096, "additive_counters", SizedColumnTypes::Properties(false, false, false, "additive metrics comma separated"));
-        parameterTypes.addVarchar(4096, "min_mutations", SizedColumnTypes::Properties(false, false, false, "dimension number (from mask_header) comma separated"));
         parameterTypes.addVarbinary(MAXHASHSIZE, "mask_header", SizedColumnTypes::Properties(false, true, false, "mask-to-dimension breakdown"));
         parameterTypes.addVarbinary(65000, "mask_blob", SizedColumnTypes::Properties(false, true, false, "mask array"));
     }
@@ -813,6 +698,10 @@ class DistinctHashCounterFactory2 : public TransformFunctionFactory
                                const SizedColumnTypes &inputTypes,
                                SizedColumnTypes &outputTypes)
     {
+        if (inputTypes.getColumnType(0).isVarbinary())
+        {
+            outputTypes.addVarbinary(inputTypes.getColumnType(0).getMaxSize(), "payload");
+        }
         outputTypes.addVarbinary(MAXHASHSIZE, "hash");
         vector<Metric> metrics = DistinctHashCounter::parseCounters(srvInterface.getParamReader(), inputTypes);
         for (unsigned i = 0; i < metrics.size(); ++i)
