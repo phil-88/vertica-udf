@@ -216,7 +216,6 @@ class CSVSink : public Sink
     std::vector<int> groupFieldCount;
 
     std::string lastLine;
-
 public:
 
     CSVSink(std::string format, std::string delimiter, std::string terminator)
@@ -386,15 +385,27 @@ public:
         jsmn_parser p;
         jsmntok_t t[4098];
 
+        int tokenLevel[4098];
+        tokenLevel[0] = 0;
+        const int maxLevel = 3;
+
         jsmn_init(&p);
         const char *src = (const char *)doc.get_payload().get_data();
         int len = doc.get_payload().get_size();
         int r = jsmn_parse(&p, src, len, t, 4098);
         for (int i = 1; i < r - 1; ++i)
         {
-            if (t[i].type == JSMN_STRING && t[i].parent == 0 && t[i + 1].parent == i)
+            tokenLevel[i] = tokenLevel[t[i].parent] + 1;
+
+            if (t[i].type == JSMN_STRING && tokenLevel[i] <= maxLevel && t[i + 1].parent == i)
             {
                 std::string key(src + t[i].start, t[i].end - t[i].start);
+                int par = t[t[i].parent].parent;
+                while (par > 0)
+                {
+                    key = std::string(src + t[par].start, t[par].end - t[par].start) + "." + key;
+                    par = t[t[par].parent].parent;
+                }
 
                 auto found = fieldIndex.find(key);
                 if (found != fieldIndex.end())
@@ -403,6 +414,9 @@ public:
                     values[ind] = make_pair(src + t[i + 1].start, t[i + 1].end - t[i + 1].start);
                     totalSize += t[i + 1].end - t[i + 1].start;
                 }
+
+                i += 1;
+                tokenLevel[i] = tokenLevel[t[i].parent] + 1;
             }
         }
 
@@ -415,7 +429,7 @@ public:
         memset(buf, defaultDelim, min(sizeMax, totalSize + fieldCount + fieldGroupCount * 2));
         int shift = 0;
 
-        int group = 0;
+        int group = -1;
         for (size_t i = 0; i < values.size(); ++i)
         {
             if (fieldGroup[i] != group)
@@ -438,7 +452,8 @@ public:
                 group = fieldGroup[i];
             }
 
-            if (values[i].second > 0 && values[i].second + (fieldCount - i - group * 2) < sizeMax)
+
+            if (values[i].second > 0 && values[i].second + (fieldCount - i + group * 2) < sizeMax)
             {
                 memcpy(buf + shift, values[i].first, values[i].second);
                 shift += values[i].second;
@@ -478,6 +493,7 @@ public:
 
         std::string header(std::move(toRecordHeader(doc)));
 
+        // rough size check
         int rowSize = header.size() + (2 * fieldCount) + (fieldGroupCount + len) + 1;
         if (rowSize > BUF_SIZE)
         {
@@ -485,7 +501,6 @@ public:
         }
 
         // parse json
-        int valueSizeTotal = 0;
         std::vector<std::pair<const char*, int> > values(fieldCount, make_pair("", 0));
 
         std::vector<int> presentIndexes;
@@ -529,8 +544,6 @@ public:
                     {
                         presentIndexes.push_back(ind + 1);
                     }
-
-                    valueSizeTotal = align256(valueSizeTotal, size, 128) + size; // todo: respect groups
                 }
             }
         }
@@ -545,6 +558,7 @@ public:
         int indexCapacity = int(values.size());
         memset(buf + bufOffset, '0', indexCapacity * 2);
 
+        int valueSizeTotal = 0;
         std::vector<int> groupSize(fieldGroupCount, 0);
         for (int ind : presentIndexes)
         {
@@ -552,6 +566,7 @@ public:
             int size = values[ind].second;
 
             int offsetAligned = align256(groupSize[group], size, 128);
+            valueSizeTotal += offsetAligned + size - groupSize[group];
             intToHex(encode256(offsetAligned, 128), buf + bufOffset + fieldReorderReverse[ind] * 2, 1);
             groupSize[group] = offsetAligned + size;
         }
@@ -816,6 +831,7 @@ public:
             int delta = sink->put(pendingDocuments.front(), output.buf + output.offset, output.size - output.offset);
             if (delta == -1)
             {
+                srvInterface.log("buffer overflow");
                 return OUTPUT_NEEDED;
             }
             output.offset += delta;
